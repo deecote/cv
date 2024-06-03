@@ -1,0 +1,106 @@
+#include <WiFi.h>
+#include <WebSocketsServer.h>
+#include <ESPAsyncWebServer.h>
+
+// ข้อมูลเครือข่ายสำหรับ Access Point
+const char* ssid = "ESP32_AP";
+const char* password = "12345678";
+const int channel = 1;           // ช่องสัญญาณ Wi-Fi (1-13)
+const bool hidden = false;       // ความสามารถในการมองเห็น SSID
+const int max_connection = 8;    // จำนวนการเชื่อมต่อสูงสุด
+
+// สร้าง AsyncWebServer object ที่พอร์ต 80
+AsyncWebServer server(80);
+// สร้าง WebSocket server
+WebSocketsServer webSocket = WebSocketsServer(81);
+
+const int ledPin = 2; // GPIO 2 (D2) ที่เชื่อมต่อกับ LED
+
+const char index_html[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ESP32 WebSocket LED Control</title>
+  <script>
+    var webSocket;
+    function initWebSocket() {
+      webSocket = new WebSocket('ws://' + window.location.hostname + ':81/');
+      webSocket.onmessage = function(event) {
+        console.log('Message from server: ' + event.data);
+      };
+    }
+
+    function sendMessage(message) {
+      webSocket.send(message);
+    }
+
+    window.onload = function() {
+      initWebSocket();
+    };
+  </script>
+</head>
+<body>
+  <h1>ESP32 WebSocket LED Control</h1>
+  <button onclick="sendMessage('ON')">Turn ON</button>
+  <button onclick="sendMessage('OFF')">Turn OFF</button>
+</body>
+</html>
+)rawliteral";
+
+void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
+  String message = "";
+  for (size_t i = 0; i < len; i++) {
+    message += (char) data[i];
+  }
+  Serial.println(message);
+
+  if (message == "ON") {
+    digitalWrite(ledPin, HIGH);
+  } else if (message == "OFF") {
+    digitalWrite(ledPin, LOW);
+  }
+}
+
+void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length) {
+  switch (type) {
+    case WStype_TEXT:
+      handleWebSocketMessage(nullptr, payload, length);
+      break;
+    default:
+      break;
+  }
+}
+
+void setup() {
+  // พอร์ต Serial สำหรับการดีบัก
+  Serial.begin(115200);
+
+  // ตั้งค่า LED pin เป็น output
+  pinMode(ledPin, OUTPUT);
+
+  // ตั้งค่า Access Point พร้อมพารามิเตอร์เพิ่มเติม
+  WiFi.softAP(ssid, password, channel, hidden, max_connection);
+  
+  // ตั้งค่ากำลังส่งสูงสุด
+  WiFi.setTxPower(WIFI_POWER_20_5dBm);
+  
+  IPAddress IP = WiFi.softAPIP();
+  Serial.print("AP IP address: ");
+  Serial.println(IP);
+
+  // เสิร์ฟหน้า HTML
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/html", index_html);
+  });
+
+  // เริ่มต้น WebSocket server
+  webSocket.begin();
+  webSocket.onEvent(onWebSocketEvent);
+
+  // เริ่มต้น server
+  server.begin();
+}
+
+void loop() {
+  webSocket.loop();
+}
